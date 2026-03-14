@@ -61,7 +61,17 @@ func (r FlashcardSetRepository) FindBySlug(ctx context.Context, slug string) (do
 func (r FlashcardSetRepository) Create(ctx context.Context, ownerID, slug string, input domain.CreateFlashcardSetInput) (domain.FlashcardSet, error) {
 	query := `
 		INSERT INTO flashcard_sets (owner_id, course_id, slug, title, description, visibility, status, language_code, estimated_minutes)
-		VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), $6, $7, $8, NULLIF($9, 0))
+		VALUES (
+			$1,
+			CASE WHEN $2 = '' THEN NULL ELSE $2::uuid END,
+			$3,
+			$4,
+			NULLIF($5, ''),
+			$6,
+			$7,
+			$8,
+			NULLIF($9, 0)
+		)
 		RETURNING id, owner_id, course_id, slug, title, description, visibility, status, language_code, card_count, COALESCE(estimated_minutes, 0), created_at, updated_at
 	`
 
@@ -92,7 +102,7 @@ func (r FlashcardSetRepository) Update(ctx context.Context, ownerID, slug string
 	query := `
 		UPDATE flashcard_sets
 		SET
-			course_id = COALESCE(NULLIF($3, ''), course_id),
+			course_id = COALESCE(CASE WHEN $3 = '' THEN NULL ELSE $3::uuid END, course_id),
 			title = COALESCE(NULLIF($4, ''), title),
 			description = COALESCE($5, description),
 			visibility = COALESCE(NULLIF($6, ''), visibility),
