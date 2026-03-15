@@ -81,13 +81,13 @@ func (s AuthService) Register(ctx context.Context, input domain.RegisterInput) (
 	}
 
 	if err := s.sendVerificationEmail(user.Email, verifyURL, expiresAt); err != nil {
-		return domain.RegisterResponse{}, err
+		log.Printf("failed to send verification email during signup for %s: %v", user.Email, err)
 	}
 
 	user.PasswordHash = ""
 
 	return domain.RegisterResponse{
-		Message: "Please verify your email before logging in.",
+		Message: "Please verify your email before logging in. If the email does not arrive, use resend verification on the confirm-email page.",
 		User:    user,
 	}, nil
 }
