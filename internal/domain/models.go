@@ -75,11 +75,30 @@ type LoginInput struct {
 	Password string `json:"password"`
 }
 
+type ForgotPasswordInput struct {
+	Email string `json:"email"`
+}
+
+type ResetPasswordInput struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
 type AuthResponse struct {
 	AccessToken string    `json:"access_token"`
 	TokenType   string    `json:"token_type"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	User        User      `json:"user"`
+}
+
+type AnalyticsOverview struct {
+	Visitors      int64  `json:"visitors"`
+	Pageviews     int64  `json:"pageviews"`
+	ViewsPerVisit string `json:"views_per_visit"`
+	BounceRate    string `json:"bounce_rate"`
+	VisitDuration string `json:"visit_duration"`
+	DateRange     string `json:"date_range"`
+	Source        string `json:"source"`
 }
 
 type CreateFlashcardSetInput struct {

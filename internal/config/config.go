@@ -8,18 +8,21 @@ import (
 )
 
 type Config struct {
-	App AppConfig
-	DB  DBConfig
-	JWT JWTConfig
+	App       AppConfig
+	DB        DBConfig
+	JWT       JWTConfig
+	Mail      MailConfig
+	Analytics AnalyticsConfig
 }
 
 type AppConfig struct {
-	Env     string
-	Host    string
-	Port    int
-	BaseURL string
-	Version string
-	CORS    CORSConfig
+	Env         string
+	Host        string
+	Port        int
+	BaseURL     string
+	FrontendURL string
+	Version     string
+	CORS        CORSConfig
 }
 
 type CORSConfig struct {
@@ -44,14 +47,32 @@ type JWTConfig struct {
 	RefreshTTLHours  int
 }
 
+type MailConfig struct {
+	From         string
+	ResendAPIKey string
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUser     string
+	SMTPPass     string
+}
+
+type AnalyticsConfig struct {
+	Provider            string
+	DashboardOwnerEmail string
+	PlausibleBaseURL    string
+	PlausibleSiteID     string
+	PlausibleAPIToken   string
+}
+
 func Load() Config {
 	return Config{
 		App: AppConfig{
-			Env:     getEnv("APP_ENV", "development"),
-			Host:    getEnv("APP_HOST", "0.0.0.0"),
-			Port:    getPort(),
-			BaseURL: getEnv("APP_BASE_URL", "http://localhost:8080"),
-			Version: getEnv("APP_VERSION", "0.1.0"),
+			Env:         getEnv("APP_ENV", "development"),
+			Host:        getEnv("APP_HOST", "0.0.0.0"),
+			Port:        getPort(),
+			BaseURL:     getEnv("APP_BASE_URL", "http://localhost:8080"),
+			FrontendURL: getEnv("FRONTEND_APP_URL", "http://localhost:3000"),
+			Version:     getEnv("APP_VERSION", "0.1.0"),
 			CORS: CORSConfig{
 				AllowedOrigins: getEnvAsSlice(
 					"CORS_ALLOWED_ORIGINS",
@@ -74,6 +95,21 @@ func Load() Config {
 			RefreshSecret:    getEnv("JWT_REFRESH_SECRET", "change-me-refresh"),
 			AccessTTLMinutes: getEnvAsInt("JWT_ACCESS_TTL_MINUTES", 15),
 			RefreshTTLHours:  getEnvAsInt("JWT_REFRESH_TTL_HOURS", 720),
+		},
+		Mail: MailConfig{
+			From:         getEnv("MAIL_FROM", "noreply@flippy.local"),
+			ResendAPIKey: getEnv("RESEND_API_KEY", ""),
+			SMTPHost:     getEnv("SMTP_HOST", ""),
+			SMTPPort:     getEnvAsInt("SMTP_PORT", 587),
+			SMTPUser:     getEnv("SMTP_USER", ""),
+			SMTPPass:     getEnv("SMTP_PASS", ""),
+		},
+		Analytics: AnalyticsConfig{
+			Provider:            strings.ToLower(getEnv("ANALYTICS_PROVIDER", "")),
+			DashboardOwnerEmail: strings.ToLower(strings.TrimSpace(getEnv("DASHBOARD_OWNER_EMAIL", ""))),
+			PlausibleBaseURL:    getEnv("PLAUSIBLE_BASE_URL", "https://plausible.io"),
+			PlausibleSiteID:     getEnv("PLAUSIBLE_SITE_ID", ""),
+			PlausibleAPIToken:   getEnv("PLAUSIBLE_API_TOKEN", ""),
 		},
 	}
 }

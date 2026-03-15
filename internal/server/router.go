@@ -25,12 +25,14 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool) http.Handler {
 	healthService := service.NewHealthService(cfg, db)
 	courseService := service.NewCourseService()
 	authService := service.NewAuthService(cfg, userRepository)
+	analyticsService := service.NewAnalyticsService(cfg)
 	flashcardSetService := service.NewFlashcardSetService(flashcardSetRepository)
 	flashcardService := service.NewFlashcardService(flashcardRepository)
 
 	healthHandler := httpHandler.NewHealthHandler(healthService)
 	courseHandler := httpHandler.NewCourseHandler(courseService)
 	authHandler := httpHandler.NewAuthHandler(authService)
+	analyticsHandler := httpHandler.NewAnalyticsHandler(analyticsService)
 	flashcardSetHandler := httpHandler.NewFlashcardSetHandler(flashcardSetService)
 	flashcardHandler := httpHandler.NewFlashcardHandler(flashcardService)
 
@@ -38,7 +40,13 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool) http.Handler {
 	mux.HandleFunc("GET /api/v1/courses", courseHandler.List)
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
+	mux.HandleFunc("POST /api/v1/auth/forgot-password", authHandler.ForgotPassword)
+	mux.HandleFunc("POST /api/v1/auth/reset-password", authHandler.ResetPassword)
 	mux.Handle("GET /api/v1/auth/me", authMiddleware(authService, http.HandlerFunc(authHandler.Me)))
+	mux.Handle(
+		"GET /api/v1/analytics/overview",
+		authMiddleware(authService, ownerOnlyMiddleware(cfg, userRepository, http.HandlerFunc(analyticsHandler.Overview))),
+	)
 	mux.HandleFunc("GET /api/v1/flashcard-sets", flashcardSetHandler.List)
 	mux.HandleFunc("GET /api/v1/flashcard-sets/{slug}", flashcardSetHandler.Get)
 	mux.HandleFunc("GET /api/v1/flashcard-sets/{slug}/cards", flashcardHandler.ListBySet)
@@ -50,6 +58,34 @@ func NewRouter(cfg config.Config, db *pgxpool.Pool) http.Handler {
 	mux.Handle("DELETE /api/v1/flashcards/{id}", authMiddleware(authService, http.HandlerFunc(flashcardHandler.Delete)))
 
 	return withCORS(cfg, withLogging(mux))
+}
+
+func ownerOnlyMiddleware(cfg config.Config, users repository.UserRepository, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cfg.Analytics.DashboardOwnerEmail == "" {
+			httpHandler.WriteErrorPublic(w, http.StatusForbidden, "dashboard owner email is not configured")
+			return
+		}
+
+		userID, ok := httpHandler.UserIDFromContext(r.Context())
+		if !ok {
+			httpHandler.WriteErrorPublic(w, http.StatusUnauthorized, "missing authenticated user")
+			return
+		}
+
+		user, err := users.FindByID(r.Context(), userID)
+		if err != nil {
+			httpHandler.WriteErrorPublic(w, http.StatusUnauthorized, "user no longer exists")
+			return
+		}
+
+		if strings.ToLower(strings.TrimSpace(user.Email)) != cfg.Analytics.DashboardOwnerEmail {
+			httpHandler.WriteErrorPublic(w, http.StatusForbidden, "dashboard access is restricted")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func withLogging(next http.Handler) http.Handler {

@@ -25,6 +25,10 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, ErrorResponse{Error: message})
 }
 
+func WriteErrorPublic(w http.ResponseWriter, status int, message string) {
+	writeError(w, status, message)
+}
+
 type contextKey string
 
 const userIDContextKey contextKey = "user_id"

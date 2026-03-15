@@ -94,7 +94,7 @@ Core schema is defined in:
 - `migrations/000001_init_schema.down.sql`
 - `docs/database-schema.md`
 
-The initial schema is now applied automatically on startup, so a fresh deploy can boot against an empty database.
+Apply the migration before starting the API in production.
 
 ## Deploying
 
@@ -108,9 +108,10 @@ Suggested flow for the separate `Flippy-Backend` repo:
 1. Copy this `backend/` directory into the root of `Flippy-Backend`.
 2. Push the repo.
 3. Provision PostgreSQL.
-4. Set the environment variables listed above.
-5. Deploy using the included `Dockerfile` or native Go buildpack support.
-6. Point the frontend to `https://your-api-host.com/api/v1`.
+4. Run `migrations/000001_init_schema.up.sql` on that database.
+5. Set the environment variables listed above.
+6. Deploy using the included `Dockerfile` or native Go buildpack support.
+7. Point the frontend to `https://your-api-host.com/api/v1`.
 
 ## Planned Domains
 
@@ -140,3 +141,25 @@ Good first integrations:
 - register
 - fetch current user
 - fetch courses
+
+## Password Reset Email
+
+Recommended setup with Resend API:
+
+```text
+MAIL_FROM=onboarding@resend.dev
+RESEND_API_KEY=re_your_resend_api_key
+```
+
+Notes:
+- `RESEND_API_KEY` is used directly by the backend to send reset emails through Resend.
+- `onboarding@resend.dev` is fine for testing. For production, verify your own domain in Resend and use a sender like `noreply@yourdomain.com`.
+
+Optional SMTP fallback:
+
+```text
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=587
+SMTP_USER=resend
+SMTP_PASS=your_resend_smtp_password
+```
