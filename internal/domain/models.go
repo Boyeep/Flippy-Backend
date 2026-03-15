@@ -84,11 +84,24 @@ type ResetPasswordInput struct {
 	Password string `json:"password"`
 }
 
+type VerifyEmailInput struct {
+	Token string `json:"token"`
+}
+
+type ResendVerificationInput struct {
+	Email string `json:"email"`
+}
+
 type AuthResponse struct {
 	AccessToken string    `json:"access_token"`
 	TokenType   string    `json:"token_type"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	User        User      `json:"user"`
+}
+
+type RegisterResponse struct {
+	Message string `json:"message"`
+	User    User   `json:"user"`
 }
 
 type AnalyticsOverview struct {

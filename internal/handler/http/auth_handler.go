@@ -54,6 +54,8 @@ func (h AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "email and password are required")
 		case errors.Is(err, service.ErrInvalidCredentials):
 			writeError(w, http.StatusUnauthorized, "invalid email or password")
+		case errors.Is(err, service.ErrEmailNotVerified):
+			writeError(w, http.StatusForbidden, "please verify your email before logging in")
 		default:
 			writeError(w, http.StatusInternalServerError, "failed to login")
 		}
@@ -76,6 +78,48 @@ func (h AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "email is required")
 		default:
 			writeError(w, http.StatusInternalServerError, "failed to process password reset request")
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	var input domain.VerifyEmailInput
+	if err := readJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.service.VerifyEmail(r.Context(), input); err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, "verification token is required")
+		case errors.Is(err, service.ErrInvalidCredentials):
+			writeError(w, http.StatusUnauthorized, "invalid or expired verification token")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to verify email")
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Request) {
+	var input domain.ResendVerificationInput
+	if err := readJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.service.ResendVerificationEmail(r.Context(), input); err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, "email is required")
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to resend verification email")
 		}
 		return
 	}

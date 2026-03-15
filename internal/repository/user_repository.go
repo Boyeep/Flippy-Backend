@@ -12,9 +12,10 @@ import (
 )
 
 var (
-	ErrUserNotFound               = errors.New("user not found")
-	ErrUserConflict               = errors.New("user already exists")
-	ErrPasswordResetTokenNotFound = errors.New("password reset token not found")
+	ErrUserNotFound                   = errors.New("user not found")
+	ErrUserConflict                   = errors.New("user already exists")
+	ErrPasswordResetTokenNotFound     = errors.New("password reset token not found")
+	ErrEmailVerificationTokenNotFound = errors.New("email verification token not found")
 )
 
 type UserRepository struct {
@@ -22,6 +23,15 @@ type UserRepository struct {
 }
 
 type PasswordResetToken struct {
+	ID        string
+	UserID    string
+	TokenHash string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedAt time.Time
+}
+
+type EmailVerificationToken struct {
 	ID        string
 	UserID    string
 	TokenHash string
@@ -148,6 +158,71 @@ func (r UserRepository) UpdatePasswordHash(ctx context.Context, userID, password
 		SET password_hash = $2, updated_at = $3
 		WHERE id = $1
 	`, userID, passwordHash, time.Now().UTC())
+	return err
+}
+
+func (r UserRepository) CreateEmailVerificationToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, tokenHash, expiresAt.UTC())
+	return err
+}
+
+func (r UserRepository) FindActiveEmailVerificationTokenByHash(ctx context.Context, tokenHash string) (EmailVerificationToken, error) {
+	row := r.db.QueryRow(ctx, `
+		SELECT id, user_id, token_hash, expires_at, used_at, created_at
+		FROM email_verification_tokens
+		WHERE token_hash = $1
+		  AND used_at IS NULL
+		  AND expires_at > NOW()
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tokenHash)
+
+	var item EmailVerificationToken
+	err := row.Scan(
+		&item.ID,
+		&item.UserID,
+		&item.TokenHash,
+		&item.ExpiresAt,
+		&item.UsedAt,
+		&item.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return EmailVerificationToken{}, ErrEmailVerificationTokenNotFound
+		}
+		return EmailVerificationToken{}, err
+	}
+
+	return item, nil
+}
+
+func (r UserRepository) MarkEmailVerificationTokenUsed(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE email_verification_tokens
+		SET used_at = $2
+		WHERE id = $1
+	`, id, time.Now().UTC())
+	return err
+}
+
+func (r UserRepository) MarkUserEmailVerified(ctx context.Context, userID string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE users
+		SET status = 'active', updated_at = $2
+		WHERE id = $1
+	`, userID, time.Now().UTC())
+	return err
+}
+
+func (r UserRepository) DeleteActiveEmailVerificationTokensByUserID(ctx context.Context, userID string) error {
+	_, err := r.db.Exec(ctx, `
+		DELETE FROM email_verification_tokens
+		WHERE user_id = $1
+		  AND used_at IS NULL
+	`, userID)
 	return err
 }
 

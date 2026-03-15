@@ -27,6 +27,7 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrInvalidInput       = errors.New("invalid input")
 	ErrUnauthorized       = errors.New("unauthorized")
+	ErrEmailNotVerified   = errors.New("email not verified")
 )
 
 type AuthService struct {
@@ -41,26 +42,54 @@ func NewAuthService(cfg config.Config, users repository.UserRepository) AuthServ
 	}
 }
 
-func (s AuthService) Register(ctx context.Context, input domain.RegisterInput) (domain.AuthResponse, error) {
+func (s AuthService) Register(ctx context.Context, input domain.RegisterInput) (domain.RegisterResponse, error) {
 	input.Username = strings.TrimSpace(input.Username)
 	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
 	input.FullName = strings.TrimSpace(input.FullName)
 
 	if input.Username == "" || input.Email == "" || len(input.Password) < 8 {
-		return domain.AuthResponse{}, ErrInvalidInput
+		return domain.RegisterResponse{}, ErrInvalidInput
 	}
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return domain.AuthResponse{}, err
+		return domain.RegisterResponse{}, err
 	}
 
 	user, err := s.users.Create(ctx, input, string(passwordHash))
 	if err != nil {
-		return domain.AuthResponse{}, err
+		return domain.RegisterResponse{}, err
 	}
 
-	return s.buildAuthResponse(user)
+	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+	token, tokenHash, err := generateResetToken()
+	if err != nil {
+		return domain.RegisterResponse{}, err
+	}
+
+	if err := s.users.DeleteActiveEmailVerificationTokensByUserID(ctx, user.ID); err != nil {
+		return domain.RegisterResponse{}, err
+	}
+
+	if err := s.users.CreateEmailVerificationToken(ctx, user.ID, tokenHash, expiresAt); err != nil {
+		return domain.RegisterResponse{}, err
+	}
+
+	verifyURL, err := s.buildVerificationURL(token)
+	if err != nil {
+		return domain.RegisterResponse{}, err
+	}
+
+	if err := s.sendVerificationEmail(user.Email, verifyURL, expiresAt); err != nil {
+		return domain.RegisterResponse{}, err
+	}
+
+	user.PasswordHash = ""
+
+	return domain.RegisterResponse{
+		Message: "Please verify your email before logging in.",
+		User:    user,
+	}, nil
 }
 
 func (s AuthService) Login(ctx context.Context, input domain.LoginInput) (domain.AuthResponse, error) {
@@ -80,6 +109,10 @@ func (s AuthService) Login(ctx context.Context, input domain.LoginInput) (domain
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password)); err != nil {
 		return domain.AuthResponse{}, ErrInvalidCredentials
+	}
+
+	if user.Status != "active" {
+		return domain.AuthResponse{}, ErrEmailNotVerified
 	}
 
 	if err := s.users.UpdateLastLogin(ctx, user.ID); err != nil {
@@ -155,6 +188,68 @@ func (s AuthService) ResetPassword(ctx context.Context, input domain.ResetPasswo
 	}
 
 	return s.users.MarkPasswordResetTokenUsed(ctx, resetToken.ID)
+}
+
+func (s AuthService) VerifyEmail(ctx context.Context, input domain.VerifyEmailInput) error {
+	input.Token = strings.TrimSpace(input.Token)
+	if input.Token == "" {
+		return ErrInvalidInput
+	}
+
+	tokenHash := hashResetToken(input.Token)
+	verificationToken, err := s.users.FindActiveEmailVerificationTokenByHash(ctx, tokenHash)
+	if err != nil {
+		if errors.Is(err, repository.ErrEmailVerificationTokenNotFound) {
+			return ErrInvalidCredentials
+		}
+		return err
+	}
+
+	if err := s.users.MarkUserEmailVerified(ctx, verificationToken.UserID); err != nil {
+		return err
+	}
+
+	return s.users.MarkEmailVerificationTokenUsed(ctx, verificationToken.ID)
+}
+
+func (s AuthService) ResendVerificationEmail(ctx context.Context, input domain.ResendVerificationInput) error {
+	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
+	if input.Email == "" {
+		return ErrInvalidInput
+	}
+
+	user, err := s.users.FindByEmail(ctx, input.Email)
+	if err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	if user.Status == "active" {
+		return nil
+	}
+
+	token, tokenHash, err := generateResetToken()
+	if err != nil {
+		return err
+	}
+
+	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+	if err := s.users.DeleteActiveEmailVerificationTokensByUserID(ctx, user.ID); err != nil {
+		return err
+	}
+
+	if err := s.users.CreateEmailVerificationToken(ctx, user.ID, tokenHash, expiresAt); err != nil {
+		return err
+	}
+
+	verifyURL, err := s.buildVerificationURL(token)
+	if err != nil {
+		return err
+	}
+
+	return s.sendVerificationEmail(user.Email, verifyURL, expiresAt)
 }
 
 func (s AuthService) ParseAccessToken(tokenString string) (string, error) {
@@ -238,9 +333,34 @@ func (s AuthService) buildResetURL(token string) (string, error) {
 	return parsedURL.String(), nil
 }
 
+func (s AuthService) buildVerificationURL(token string) (string, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(s.cfg.App.FrontendURL), "/")
+	if baseURL == "" {
+		return "", fmt.Errorf("frontend app url is not configured")
+	}
+
+	parsedURL, err := url.Parse(baseURL + "/verify-email")
+	if err != nil {
+		return "", err
+	}
+
+	query := parsedURL.Query()
+	query.Set("token", token)
+	parsedURL.RawQuery = query.Encode()
+	return parsedURL.String(), nil
+}
+
 func (s AuthService) sendPasswordResetEmail(recipient, resetURL string, expiresAt time.Time) error {
 	if strings.TrimSpace(s.cfg.Mail.ResendAPIKey) != "" {
-		return s.sendPasswordResetEmailViaResend(recipient, resetURL, expiresAt)
+		return s.sendEmailViaResend(
+			recipient,
+			"Reset your Flippy password",
+			fmt.Sprintf(
+				"<p>We received a request to reset your Flippy password.</p><p><a href=\"%s\">Open this link to choose a new password</a></p><p>This link expires at %s.</p><p>If you did not request this, you can ignore this email.</p>",
+				resetURL,
+				expiresAt.Format(time.RFC1123),
+			),
+		)
 	}
 
 	if strings.TrimSpace(s.cfg.Mail.SMTPHost) == "" {
@@ -268,16 +388,48 @@ func (s AuthService) sendPasswordResetEmail(recipient, resetURL string, expiresA
 	return smtp.SendMail(address, auth, s.cfg.Mail.From, []string{recipient}, []byte(message))
 }
 
-func (s AuthService) sendPasswordResetEmailViaResend(recipient, resetURL string, expiresAt time.Time) error {
+func (s AuthService) sendVerificationEmail(recipient, verifyURL string, expiresAt time.Time) error {
+	if strings.TrimSpace(s.cfg.Mail.ResendAPIKey) != "" {
+		return s.sendEmailViaResend(
+			recipient,
+			"Verify your Flippy account",
+			fmt.Sprintf(
+				"<p>Welcome to Flippy.</p><p><a href=\"%s\">Click here to verify your email address</a></p><p>This verification link expires at %s.</p>",
+				verifyURL,
+				expiresAt.Format(time.RFC1123),
+			),
+		)
+	}
+
+	if strings.TrimSpace(s.cfg.Mail.SMTPHost) == "" {
+		log.Printf("email verification requested for %s: %s (expires %s)", recipient, verifyURL, expiresAt.Format(time.RFC3339))
+		return nil
+	}
+
+	address := fmt.Sprintf("%s:%d", s.cfg.Mail.SMTPHost, s.cfg.Mail.SMTPPort)
+	auth := smtp.PlainAuth("", s.cfg.Mail.SMTPUser, s.cfg.Mail.SMTPPass, s.cfg.Mail.SMTPHost)
+	message := strings.Join([]string{
+		fmt.Sprintf("From: %s", s.cfg.Mail.From),
+		fmt.Sprintf("To: %s", recipient),
+		"Subject: Verify your Flippy account",
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=UTF-8",
+		"",
+		"Welcome to Flippy.",
+		"",
+		fmt.Sprintf("Open this link to verify your email address: %s", verifyURL),
+		fmt.Sprintf("This link expires at %s.", expiresAt.Format(time.RFC1123)),
+	}, "\r\n")
+
+	return smtp.SendMail(address, auth, s.cfg.Mail.From, []string{recipient}, []byte(message))
+}
+
+func (s AuthService) sendEmailViaResend(recipient, subject, html string) error {
 	payload := map[string]any{
 		"from":    s.cfg.Mail.From,
 		"to":      []string{recipient},
-		"subject": "Reset your Flippy password",
-		"html": fmt.Sprintf(
-			"<p>We received a request to reset your Flippy password.</p><p><a href=\"%s\">Open this link to choose a new password</a></p><p>This link expires at %s.</p><p>If you did not request this, you can ignore this email.</p>",
-			resetURL,
-			expiresAt.Format(time.RFC1123),
-		),
+		"subject": subject,
+		"html":    html,
 	}
 
 	body, err := json.Marshal(payload)
