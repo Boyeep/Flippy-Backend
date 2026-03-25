@@ -163,3 +163,5 @@ SMTP_PORT=587
 SMTP_USER=resend
 SMTP_PASS=your_resend_smtp_password
 ```
+
+Boy Steven Was Here to change the world
