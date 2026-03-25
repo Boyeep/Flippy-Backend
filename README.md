@@ -1,6 +1,6 @@
 # Flippy Backend
 
-Separate Go backend service for Flippy.
+Separate Go backend service for Flippy. to enchace the structure for better of humanity
 
 ## Stack
 
